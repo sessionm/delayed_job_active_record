@@ -20,19 +20,19 @@ module Delayed
 
         if rails3?
           self.table_name = delayed_job_table_name
-          def self.ready_to_run(worker_name, max_run_time)
-            locked_is_null =    select(:id).where('run_at <= ? AND locked_at is NULL AND failed_at is NULL', db_time_now).order('priority ASC, run_at ASC')
-            locked_at_db_time = select(:id).where('run_at <= ? AND locked_at < ?     AND failed_at is NULL', db_time_now, db_time_now - max_run_time).order('priority ASC, run_at ASC')
-            locked_by_worker  = select(:id).where('run_at <= ? AND locked_by < ?     AND failed_at is NULL', db_time_now, worker_name).order('priority ASC, run_at ASC')
+          def self.ready_to_run(worker_name, max_run_time, limit)
+            locked_is_null =    select(:id).where('run_at <= ? AND locked_at is NULL AND failed_at is NULL', db_time_now).order('priority ASC, run_at ASC').limit(limit)
+            locked_at_db_time = select(:id).where('run_at <= ? AND locked_at < ?     AND failed_at is NULL', db_time_now, db_time_now - max_run_time).order('priority ASC, run_at ASC').limit(limit)
+            locked_by_worker  = select(:id).where('run_at <= ? AND locked_by < ?     AND failed_at is NULL', db_time_now, worker_name).order('priority ASC, run_at ASC').limit(limit)
             probable_ids = (locked_is_null.to_a + locked_at_db_time.to_a + locked_by_worker.to_a).flatten
-            where('id in ? (run_at <= ? AND (locked_at IS NULL OR locked_at < ?) OR locked_by = ?) AND failed_at IS NULL', probable_ids.to_a, db_time_now, db_time_now - max_run_time, worker_name)
+            where('id in (?) (run_at <= ? AND (locked_at IS NULL OR locked_at < ?) OR locked_by = ?) AND failed_at IS NULL', probable_ids.to_a.join(", "), db_time_now, db_time_now - max_run_time, worker_name)
           end
           def self.by_priority
             order('priority ASC, run_at ASC')
           end
         else
           set_table_name delayed_job_table_name
-          named_scope :ready_to_run, lambda {|worker_name, max_run_time|
+          named_scope :ready_to_run, lambda {|worker_name, max_run_time, limit|
             { :conditions => ['(run_at <= ? AND (locked_at IS NULL OR locked_at < ?) OR locked_by = ?) AND failed_at IS NULL', db_time_now, db_time_now - max_run_time, worker_name] }
           }
           named_scope :by_priority, :order => 'priority ASC, run_at ASC'
@@ -53,7 +53,7 @@ module Delayed
 
         # Find a few candidate jobs to run (in case some immediately get locked by others).
         def self.find_available(worker_name, limit = 5, max_run_time = Worker.max_run_time)
-          scope = self.ready_to_run(worker_name, max_run_time)
+          scope = self.ready_to_run(worker_name, max_run_time, limit)
           scope = scope.scoped(:conditions => ['priority >= ?', Worker.min_priority]) if Worker.min_priority
           scope = scope.scoped(:conditions => ['priority <= ?', Worker.max_priority]) if Worker.max_priority
           scope = scope.scoped(:conditions => ["queue IN (?)", Worker.queues]) if Worker.queues.any?
