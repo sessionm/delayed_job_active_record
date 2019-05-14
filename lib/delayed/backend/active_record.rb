@@ -21,7 +21,11 @@ module Delayed
         if rails3?
           self.table_name = delayed_job_table_name
           def self.ready_to_run(worker_name, max_run_time)
-            where('(run_at <= ? AND (locked_at IS NULL OR locked_at < ?) OR locked_by = ?) AND failed_at IS NULL', db_time_now, db_time_now - max_run_time, worker_name)
+            locked_is_null =    select(:id).where('run_at <= ? AND locked_at is NULL AND failed_at is NULL', db_time_now).order('priority ASC, run_at ASC')
+            locked_at_db_time = select(:id).where('run_at <= ? AND locked_at < ?     AND failed_at is NULL', db_time_now, db_time_now - max_run_time).order('priority ASC, run_at ASC')
+            locked_by_worker  = select(:id).where('run_at <= ? AND locked_by < ?     AND failed_at is NULL', db_time_now, worker_name).order('priority ASC, run_at ASC')
+            probable_ids = (locked_is_null.to_a + locked_at_db_time.to_a + locked_by_worker.to_a).flatten
+            where('id in ? (run_at <= ? AND (locked_at IS NULL OR locked_at < ?) OR locked_by = ?) AND failed_at IS NULL', probable_ids.to_a, db_time_now, db_time_now - max_run_time, worker_name)
           end
           def self.by_priority
             order('priority ASC, run_at ASC')
